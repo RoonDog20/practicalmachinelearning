@@ -184,3 +184,6 @@ Cross-validation against a validation set with *Random Forests* modeling
 indicates it provides exceptionally good accuracy classifying the class of the 
 exercise based on the 52 input features from the sensor equipment. 
 We expect close to **99%** accuracy with this model for new, out-of-sample data.
+
+The github reposity containing the R markdown file and the supporting files 
+can be reached at <https://github.com/RoonDog20/practicalmachinelearning>
