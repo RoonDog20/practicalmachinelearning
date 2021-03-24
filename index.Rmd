@@ -1,0 +1,186 @@
+---
+title: "Predicting Proper Execution of Unilateral Dumbbell Biceps Curl"
+author: "Rooney I."
+date: "3/23/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(parallel)
+library(doParallel)
+library(caret)
+library(ggplot2)
+library(cowplot)
+```
+
+## Abstract
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible
+to collect a large amount of data about personal activity relatively 
+inexpensively. These type of devices are part of the quantified self movement – 
+a group of enthusiasts who take measurements about themselves regularly to 
+improve their health, to find patterns in their behavior, or because they are 
+tech geeks. One thing that people regularly do is quantify how much of a 
+particular activity they do, but they rarely quantify how well they do it. 
+
+In this project, we are using data from accelerometers on the belt, forearm, arm, 
+and dumbell of six participants. They were asked to perform barbell lifts correctly 
+and then incorrectly in 4 different ways.
+
+Fitting a *random forests* classification model to the resulting data results 
+in a model that can accurately predict whether a dumbbel lift is being done
+correctly or incorrectly (and which type of error is being made) with over
+99% accuracy.
+
+## Data Processing
+
+### Data Cleaning
+
+The initial data set consited of a matrix with 159 features and one response. 
+Review of the data showed that many of the columns are sparsely populated. 
+Additionally, there were several timestamp and subject identification features 
+that would not be used for prediction. These columns, and the sparsely 
+populated columns, were eliminated for the training and testing datasets.
+
+```{r cleaning, include=FALSE, message=FALSE}
+# Read-in data and convert 
+pml.train <- read.csv("pml-training.csv")
+pml.train$classe <- as.factor(pml.train$classe)
+t.rows <- nrow(pml.train) # number of observations
+del.cols <- c(1:7) # Delete the first 7 columns; these are ID & timestamps
+# Iterate through columns, if more than 90% are blank or NAs, add to deletion list
+for (i in 8:ncol(pml.train)) {
+    emptys <- sum(is.na(pml.train[,i]) | pml.train[,i]=="") 
+    if (emptys/t.rows > 0.90) del.cols <- append(del.cols,i)
+}
+# Remove columns identified for deletion
+pml.train <- pml.train[,-del.cols]
+```
+
+### Data Partitioning
+
+The pre-processing resulted in a `19622 x 53` data table (19,622 observations
+across 52 features and one response). We partitioned this data frame into a 
+training set (approx. 75% of the observations) and a testing set.
+
+```{r partition, include=FALSE, message=FALSE}
+set.seed(847)
+in.train <- createDataPartition(y=pml.train$classe, p=0.75, list=FALSE)
+training <- pml.train[in.train,] # Remove ID & other vars with sparse data
+testing  <- pml.train[-in.train,]
+```
+
+### Exploratory Data Analysis
+
+Fifty-two predictors is a significant number and does not lend itself to 
+exploration through individual plots. In any case, it is unlikely any single
+one of the individual plots would yield interesting results.
+
+To get a sense of the variability of the data across it's fifty-two 
+dimensions we performed Principal Components Analysis on the training data to 
+see if we could account for the variability through only a few principal 
+components.
+
+```{r pca, echo=FALSE, fig.cap="FIGURE 1.1: Principal Component Results"}
+pr.out <- prcomp(training[,-53], scale=TRUE)
+par(mfrow=c(1,2))
+plot(pr.out$x[,1:2], col=training$classe, pch=19, xlab="PC1", ylab="PC2")
+legend("topright", legend=levels(training$classe), pch=19, col=unique(training$classe))
+plot(summary(pr.out)$importance[3,], type="o", 
+     ylab="Cumulative PVE", xlab="Principal Component", col="blue")
+```
+
+As can be seen in Figure 1-1, on the left the plot of the first two principal
+components does reveal five clusters however each cluster includes all of the
+responses making these two components unsuitable as the sole basis of 
+classification. This makes sense, as the diagram on the first shows that we do
+not account for 95% of the variability in the data until we reach twenty-five
+principal components. Twenty five principal components does not significantly
+simplify our model and would introduce increased model complexity. We elect
+to conduct further modeling using all fifty-two features.
+
+## Modeling
+
+We are trying to solve a multiple-response (>2) classification problem using a
+group of continuous and discrete predictors. We will consider two modeling
+approaches that are good with this type of prediction (one simple and one
+complex): 
+
+1. *Linear Discriminant Analysis*
+2. *Random Forests* 
+
+### Linear Discriminant Analysis (LDA)
+
+In *LDA* we model the distribution of the predictors X separately in each of 
+the response classes (i.e. given Y ), and then use Bayes’ theorem to flip these
+around into estimates for Pr(Y = k|X = x). Using *LDA* to predict the *class*
+using all predictors results in the following confusion matrix:
+
+```{r lda, echo=FALSE, fig.cap="FIGURE 2.1: Linear Discriminant Analysis"}
+fit.lda <- train(classe ~ ., data=training, method="lda")
+pred.lda <- predict(fit.lda, newdata=testing[,-53])
+cm.lda <- confusionMatrix(pred.lda, testing$classe, dnn=c("Prediction","Reference"))
+g.lda <- ggplot(as.data.frame(cm.lda$table), 
+               aes(Prediction,sort(Reference, decreasing=TRUE), fill=Freq)) +
+  geom_tile() +
+  geom_text(aes(label=Freq)) +
+  scale_fill_gradient(low="white", high="red") +
+  labs(x = "Reference", y="Prediction") +
+  scale_x_discrete(labels=c("A","B","C","D","E")) +
+  scale_y_discrete(labels=c("E","D","C","B","A"))
+g.lda
+```
+
+In Figure 2.1 We can see that there is some strong prediction accuracy along 
+the diagonal using *LDA* to cross-validate against our testing set. But there 
+are also a significant number of mis-classifications using this model. Our 
+overall accuracy on the testing set using *LDA* is about **70%**. This is too 
+low so we will pursue a more complex approach next.
+
+### Random Forests
+
+Modeling using *Random Forests* builds a number of decision trees on bootstrapped 
+training samples. But when building these decision trees, each time a split in 
+a tree is considered, a random sample of *m* predictors is chosen as split 
+candidates from the full set of *p* predictors. The split is allowed to use only 
+one of those *m* predictors. A fresh sample of *m* predictors is taken at each 
+split, and typically we choose m ≈ √p, that is, the number of predictors 
+considered at each split is approximately equal to the square root of the total 
+number of predictors. These trees are then combined yielding very accurate
+classification. *Random Forests* is a CPU intensive modeling approach, to 
+create our model we leverage a parallel processing library in R to allow to 
+modeling to complete sooner. Even with this optimization though, the modeling
+across 52 features and close to 20,000 observations took almost three minutes
+on a modern Intel i7 CPU.
+
+```{r rf, echo=FALSE, fig.cap="FIGURE 2.2: Random Forests", cache=TRUE}
+fit.control <- trainControl(method="cv", number=3, allowParallel=TRUE)
+cluster <- makeCluster(detectCores()-1)
+registerDoParallel(cluster)
+fit.rf  <- train(classe ~ ., data=training, method="rf", trControl=fit.control)
+stopCluster(cluster)
+registerDoSEQ()
+pred.rf <- predict(fit.rf, newdata=testing[,-53])
+cm.rf <- confusionMatrix(pred.rf, testing$classe, dnn=c("Prediction","Reference"))
+g.rf <- ggplot(as.data.frame(cm.rf$table), 
+          aes(Prediction,sort(Reference, decreasing=TRUE), fill=Freq)) +
+        geom_tile() +
+        geom_text(aes(label=Freq)) +
+        scale_fill_gradient(low="white", high="red") +
+        labs(x = "Reference", y="Prediction") +
+        scale_x_discrete(labels=c("A","B","C","D","E")) +
+        scale_y_discrete(labels=c("E","D","C","B","A"))
+g.rf
+```
+
+The confusion matrix pictured in Figure 2.2 shows significantly improved 
+accuracy for this model when cross-validated on the testing set. In fact, 
+we are over **99%** accurate using this model on our testing set.
+
+## Conclusion
+
+Cross-validation against a validation set with *Random Forests* modeling 
+indicates it provides exceptionally good accuracy classifying the class of the 
+exercise based on the 52 input features from the sensor equipment. 
+We expect close to **99%** accuracy with this model for new, out-of-sample data.
