@@ -5,7 +5,7 @@ date: "3/23/2021"
 output: html_document
 ---
 
-```{r setup, include=FALSE}
+```{r setup, message=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 library(parallel)
 library(doParallel)
@@ -43,7 +43,7 @@ Additionally, there were several timestamp and subject identification features
 that would not be used for prediction. These columns, and the sparsely 
 populated columns, were eliminated for the training and testing datasets.
 
-```{r cleaning, include=FALSE, message=FALSE}
+```{r cleaning, message=FALSE}
 # Read-in data and convert 
 pml.train <- read.csv("pml-training.csv")
 pml.train$classe <- as.factor(pml.train$classe)
@@ -64,7 +64,7 @@ The pre-processing resulted in a `19622 x 53` data table (19,622 observations
 across 52 features and one response). We partitioned this data frame into a 
 training set (approx. 75% of the observations) and a testing set.
 
-```{r partition, include=FALSE, message=FALSE}
+```{r partition, message=FALSE}
 set.seed(847)
 in.train <- createDataPartition(y=pml.train$classe, p=0.75, list=FALSE)
 training <- pml.train[in.train,] # Remove ID & other vars with sparse data
@@ -82,7 +82,7 @@ dimensions we performed Principal Components Analysis on the training data to
 see if we could account for the variability through only a few principal 
 components.
 
-```{r pca, echo=FALSE, fig.cap="FIGURE 1.1: Principal Component Results"}
+```{r pca, fig.cap="FIGURE 1.1: Principal Component Results"}
 pr.out <- prcomp(training[,-53], scale=TRUE)
 par(mfrow=c(1,2))
 plot(pr.out$x[,1:2], col=training$classe, pch=19, xlab="PC1", ylab="PC2")
@@ -117,7 +117,7 @@ the response classes (i.e. given Y ), and then use Bayes’ theorem to flip thes
 around into estimates for Pr(Y = k|X = x). Using *LDA* to predict the *class*
 using all predictors results in the following confusion matrix:
 
-```{r lda, echo=FALSE, fig.cap="FIGURE 2.1: Linear Discriminant Analysis"}
+```{r lda, fig.cap="FIGURE 2.1: Linear Discriminant Analysis"}
 fit.lda <- train(classe ~ ., data=training, method="lda")
 pred.lda <- predict(fit.lda, newdata=testing[,-53])
 cm.lda <- confusionMatrix(pred.lda, testing$classe, dnn=c("Prediction","Reference"))
@@ -154,7 +154,7 @@ modeling to complete sooner. Even with this optimization though, the modeling
 across 52 features and close to 20,000 observations took almost three minutes
 on a modern Intel i7 CPU.
 
-```{r rf, echo=FALSE, fig.cap="FIGURE 2.2: Random Forests", cache=TRUE}
+```{r rf, fig.cap="FIGURE 2.2: Random Forests", cache=TRUE}
 fit.control <- trainControl(method="cv", number=3, allowParallel=TRUE)
 cluster <- makeCluster(detectCores()-1)
 registerDoParallel(cluster)
